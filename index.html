@@ -1,0 +1,642 @@
+
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>BlockCraft Classic</title>
+
+<style>
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background: #87ceeb;
+  font-family: Arial, sans-serif;
+  touch-action: none;
+  user-select: none;
+}
+
+#game {
+  position: fixed;
+  inset: 0;
+}
+
+#topbar {
+  position: fixed;
+  top: 10px;
+  left: 10px;
+  color: white;
+  background: #0008;
+  padding: 9px 13px;
+  border-radius: 8px;
+  font-size: 14px;
+  pointer-events: none;
+}
+
+#crosshair {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  color: white;
+  font-size: 25px;
+  transform: translate(-50%, -50%);
+  text-shadow: 1px 1px 3px black;
+  pointer-events: none;
+}
+
+#joystick {
+  position: fixed;
+  left: 25px;
+  bottom: 35px;
+  width: 115px;
+  height: 115px;
+  border-radius: 50%;
+  background: #ffffff35;
+  border: 3px solid #ffffff90;
+  touch-action: none;
+}
+
+#stick {
+  position: absolute;
+  width: 48px;
+  height: 48px;
+  left: 30px;
+  top: 30px;
+  border-radius: 50%;
+  background: #ffffffbb;
+  border: 2px solid white;
+}
+
+.controls {
+  position: fixed;
+  right: 18px;
+  bottom: 28px;
+  display: grid;
+  grid-template-columns: 65px 65px;
+  gap: 10px;
+}
+
+.controls button, #jump {
+  border: 2px solid #ffffffbb;
+  border-radius: 14px;
+  background: #263238bb;
+  color: white;
+  font-weight: bold;
+  touch-action: none;
+}
+
+.controls button {
+  height: 58px;
+  font-size: 13px;
+}
+
+#jump {
+  position: fixed;
+  right: 30px;
+  bottom: 165px;
+  width: 65px;
+  height: 55px;
+}
+
+#hotbar {
+  position: fixed;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 5px;
+}
+
+.slot {
+  width: 42px;
+  height: 42px;
+  border: 2px solid #ffffff88;
+  background: #263238bb;
+  color: white;
+  border-radius: 5px;
+  font-size: 10px;
+}
+
+.slot.active {
+  border: 3px solid yellow;
+  background: #607d8bcc;
+}
+
+@media (orientation: portrait) {
+  #topbar::after {
+    content: " | แนะนำให้หมุนจอแนวนอน";
+    color: #ffeb3b;
+  }
+}
+</style>
+</head>
+
+<body>
+
+<div id="game"></div>
+<div id="topbar">BLOCKCRAFT CLASSIC</div>
+<div id="crosshair">+</div>
+
+<div id="joystick">
+  <div id="stick"></div>
+</div>
+
+<button id="jump">JUMP</button>
+
+<div class="controls">
+  <button id="break">BREAK</button>
+  <button id="place">PLACE</button>
+</div>
+
+<div id="hotbar">
+  <button class="slot active" data-type="grass">Grass</button>
+  <button class="slot" data-type="dirt">Dirt</button>
+  <button class="slot" data-type="stone">Stone</button>
+  <button class="slot" data-type="wood">Wood</button>
+  <button class="slot" data-type="sand">Sand</button>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from "three";
+
+// ==================================
+// 1. BASIC SETUP
+// ==================================
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87ceeb);
+
+const camera = new THREE.PerspectiveCamera(
+  75,
+  innerWidth / innerHeight,
+  0.1,
+  1000
+);
+
+camera.position.set(0, 2.2, 6);
+
+const renderer = new THREE.WebGLRenderer({
+  antialias: false
+});
+
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+
+document.getElementById("game").appendChild(renderer.domElement);
+
+scene.add(new THREE.HemisphereLight(
+  0xffffff,
+  0x667755,
+  2
+));
+
+const sunlight = new THREE.DirectionalLight(
+  0xffffff,
+  1.5
+);
+
+sunlight.position.set(10, 20, 10);
+scene.add(sunlight);
+
+// ==================================
+// 2. TEXTURE SYSTEM
+// ==================================
+
+const textureLoader = new THREE.TextureLoader();
+
+function loadTexture(path) {
+  const texture = textureLoader.load(
+    path,
+    () => console.log("Texture loaded:", path),
+    undefined,
+    () => console.error("Texture missing:", path)
+  );
+
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.magFilter = THREE.NearestFilter;
+  texture.minFilter = THREE.NearestFilter;
+
+  return texture;
+}
+
+// Load PNG files
+const dirtTexture = loadTexture("textures/Dirt.png");
+const grassTopTexture = loadTexture("textures/DirtUp.png");
+const grassSideTexture = loadTexture("textures/Dirtlr.png");
+const stoneTexture = loadTexture("textures/Stone.png");
+
+// Create material
+function createMaterial(texture) {
+  return new THREE.MeshLambertMaterial({
+    map: texture
+  });
+}
+
+// ==================================
+// 3. BLOCK MATERIALS
+// ==================================
+
+// BoxGeometry material order:
+// +X, -X, +Y, -Y, +Z, -Z
+
+const grassMaterials = [
+  createMaterial(grassSideTexture),
+  createMaterial(grassSideTexture),
+  createMaterial(grassTopTexture),
+  createMaterial(dirtTexture),
+  createMaterial(grassSideTexture),
+  createMaterial(grassSideTexture)
+];
+
+const materials = {
+  grass: grassMaterials,
+
+  dirt: createMaterial(dirtTexture),
+
+  stone: createMaterial(stoneTexture),
+
+  wood: new THREE.MeshLambertMaterial({
+    color: 0x986333
+  }),
+
+  sand: new THREE.MeshLambertMaterial({
+    color: 0xe4d28b
+  })
+};
+
+const geometry = new THREE.BoxGeometry(1, 1, 1);
+
+const blocks = [];
+
+// ==================================
+// 4. BLOCK CREATION
+// ==================================
+
+function addBlock(x, y, z, type) {
+  const block = new THREE.Mesh(
+    geometry,
+    materials[type]
+  );
+
+  block.position.set(x, y, z);
+  block.userData.type = type;
+
+  scene.add(block);
+  blocks.push(block);
+
+  return block;
+}
+
+function removeBlock(block) {
+  scene.remove(block);
+
+  const index = blocks.indexOf(block);
+
+  if (index !== -1) {
+    blocks.splice(index, 1);
+  }
+}
+
+// ==================================
+// 5. WORLD GENERATION
+// ==================================
+
+// Flat grass world
+for (let x = -10; x <= 10; x++) {
+  for (let z = -10; z <= 10; z++) {
+    addBlock(x, 0, z, "grass");
+  }
+}
+
+// Small dirt hills
+for (let i = 0; i < 12; i++) {
+  const x = Math.floor(Math.random() * 15) - 7;
+  const z = Math.floor(Math.random() * 15) - 7;
+
+  addBlock(x, 1, z, "dirt");
+}
+
+// ==================================
+// 6. PLAYER MOVEMENT
+// ==================================
+
+let yaw = 0;
+let pitch = 0;
+
+let moveX = 0;
+let moveZ = 0;
+
+let velocityY = 0;
+let grounded = true;
+
+const keys = {};
+
+window.addEventListener("keydown", e => {
+  keys[e.key.toLowerCase()] = true;
+});
+
+window.addEventListener("keyup", e => {
+  keys[e.key.toLowerCase()] = false;
+});
+
+function jump() {
+  if (grounded) {
+    velocityY = 7;
+    grounded = false;
+  }
+}
+
+document.getElementById("jump").addEventListener(
+  "pointerdown",
+  e => {
+    e.preventDefault();
+    jump();
+  }
+);
+
+// ==================================
+// 7. MOBILE JOYSTICK
+// ==================================
+
+const joystick = document.getElementById("joystick");
+const stick = document.getElementById("stick");
+
+let joyPointer = null;
+
+joystick.addEventListener("pointerdown", e => {
+  e.preventDefault();
+
+  joyPointer = e.pointerId;
+  joystick.setPointerCapture(e.pointerId);
+
+  updateJoystick(e);
+});
+
+joystick.addEventListener("pointermove", e => {
+  if (e.pointerId === joyPointer) {
+    updateJoystick(e);
+  }
+});
+
+function updateJoystick(e) {
+  const rect = joystick.getBoundingClientRect();
+
+  let x = e.clientX - (rect.left + rect.width / 2);
+  let y = e.clientY - (rect.top + rect.height / 2);
+
+  const max = 35;
+  const length = Math.hypot(x, y);
+
+  if (length > max) {
+    x = x / length * max;
+    y = y / length * max;
+  }
+
+  stick.style.transform =
+    `translate(${x}px, ${y}px)`;
+
+  moveX = x / max;
+  moveZ = y / max;
+}
+
+function resetJoystick() {
+  joyPointer = null;
+  moveX = 0;
+  moveZ = 0;
+
+  stick.style.transform = "translate(0px, 0px)";
+}
+
+joystick.addEventListener("pointerup", resetJoystick);
+joystick.addEventListener("pointercancel", resetJoystick);
+
+// ==================================
+// 8. TOUCH CAMERA
+// ==================================
+
+let lookPointer = null;
+let lastX = 0;
+let lastY = 0;
+
+renderer.domElement.addEventListener("pointerdown", e => {
+  if (e.pointerType === "mouse") return;
+
+  lookPointer = e.pointerId;
+  lastX = e.clientX;
+  lastY = e.clientY;
+
+  renderer.domElement.setPointerCapture(e.pointerId);
+});
+
+renderer.domElement.addEventListener("pointermove", e => {
+  if (e.pointerId !== lookPointer) return;
+
+  const dx = e.clientX - lastX;
+  const dy = e.clientY - lastY;
+
+  yaw -= dx * 0.004;
+  pitch -= dy * 0.004;
+
+  pitch = Math.max(-1.4, Math.min(1.4, pitch));
+
+  lastX = e.clientX;
+  lastY = e.clientY;
+});
+
+renderer.domElement.addEventListener("pointerup", e => {
+  if (e.pointerId === lookPointer) {
+    lookPointer = null;
+  }
+});
+
+renderer.domElement.addEventListener("pointercancel", () => {
+  lookPointer = null;
+});
+
+// Mouse camera
+let mouseDown = false;
+
+renderer.domElement.addEventListener("mousedown", () => {
+  mouseDown = true;
+});
+
+window.addEventListener("mouseup", () => {
+  mouseDown = false;
+});
+
+window.addEventListener("mousemove", e => {
+  if (!mouseDown) return;
+
+  yaw -= e.movementX * 0.003;
+  pitch -= e.movementY * 0.003;
+
+  pitch = Math.max(-1.4, Math.min(1.4, pitch));
+});
+
+// ==================================
+// 9. BLOCK INTERACTION
+// ==================================
+
+const raycaster = new THREE.Raycaster();
+const center = new THREE.Vector2(0, 0);
+
+let selectedBlock = "grass";
+
+// Hotbar selection
+document.querySelectorAll(".slot").forEach(slot => {
+  slot.addEventListener("click", () => {
+    document.querySelectorAll(".slot").forEach(s => {
+      s.classList.remove("active");
+    });
+
+    slot.classList.add("active");
+    selectedBlock = slot.dataset.type;
+  });
+});
+
+function getTarget() {
+  raycaster.setFromCamera(center, camera);
+
+  return raycaster.intersectObjects(blocks, false)[0];
+}
+
+// Break block
+document.getElementById("break").addEventListener(
+  "pointerdown",
+  e => {
+    e.preventDefault();
+
+    const hit = getTarget();
+
+    if (hit && hit.distance < 6) {
+      removeBlock(hit.object);
+    }
+  }
+);
+
+// Place block
+document.getElementById("place").addEventListener(
+  "pointerdown",
+  e => {
+    e.preventDefault();
+
+    const hit = getTarget();
+
+    if (!hit || hit.distance >= 6) return;
+
+    const normal = hit.face.normal.clone();
+
+    const position = hit.object.position.clone().add(normal);
+
+    const occupied = blocks.some(block =>
+      block.position.distanceTo(position) < 0.1
+    );
+
+    if (!occupied) {
+      addBlock(
+        Math.round(position.x),
+        Math.round(position.y),
+        Math.round(position.z),
+        selectedBlock
+      );
+    }
+  }
+);
+
+// ==================================
+// 10. GAME LOOP
+// ==================================
+
+let previousTime = performance.now();
+
+function animate(time) {
+  requestAnimationFrame(animate);
+
+  const delta = Math.min(
+    (time - previousTime) / 1000,
+    0.05
+  );
+
+  previousTime = time;
+
+  let forward = moveZ;
+  let sideways = moveX;
+
+  if (keys["w"]) forward -= 1;
+  if (keys["s"]) forward += 1;
+  if (keys["a"]) sideways -= 1;
+  if (keys["d"]) sideways += 1;
+
+  if (keys[" "]) jump();
+
+  const speed = 5 * delta;
+
+  const direction = new THREE.Vector3(
+    -Math.sin(yaw),
+    0,
+    -Math.cos(yaw)
+  );
+
+  const right = new THREE.Vector3(
+    Math.cos(yaw),
+    0,
+    -Math.sin(yaw)
+  );
+
+  camera.position.addScaledVector(
+    direction,
+    -forward * speed
+  );
+
+  camera.position.addScaledVector(
+    right,
+    sideways * speed
+  );
+
+  // Jump physics
+  velocityY -= 18 * delta;
+  camera.position.y += velocityY * delta;
+
+  if (camera.position.y <= 2.2) {
+    camera.position.y = 2.2;
+    velocityY = 0;
+    grounded = true;
+  }
+
+  camera.rotation.order = "YXZ";
+  camera.rotation.y = yaw;
+  camera.rotation.x = pitch;
+
+  renderer.render(scene, camera);
+}
+
+requestAnimationFrame(animate);
+
+// ==================================
+// 11. RESIZE
+// ==================================
+
+window.addEventListener("resize", () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+</script>
+</body>
+  </html>
+  
